@@ -4,11 +4,10 @@ from base64 import b64encode, b64decode
 import secrets
 import random
 import os
-from tkinter import *
+import tkinter as tk
 import tkinter.filedialog
 
 iv = secrets.token_bytes(16)
-mac = iv
 message = b''
 key = b''
 extension = ""
@@ -164,16 +163,14 @@ def aes_decrypt_ctr(key, ciphertext):
     savefile(plaintext)
 
 def aes_encrypt_ccm(key, plaintext):
-    global mac
+    mac = iv
     backend = default_backend()
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
 
-    # Initialize counter
     counter = int.from_bytes(iv, byteorder='big')
 
     plaintext = add_pkcs7_padding(plaintext)
     split_plaintext = split_text_to_blocks(plaintext)
-    total_blocks = len(split_plaintext)
     ciphertext = b""
 
     for block in split_plaintext:
@@ -183,67 +180,63 @@ def aes_encrypt_ccm(key, plaintext):
         mac = bytes(x ^ y for x, y in zip(block, working_block))
 
 
+    for block in split_plaintext:
+        counter_bytes = counter.to_bytes(16, byteorder='big')
 
-    for index, block in enumerate(split_plaintext):
-        if index == total_blocks - 1:
-            encrypted_block = bytes(x ^ y for x, y in zip(block, mac))
-            ciphertext += encrypted_block
-            print("last")
-            print(ciphertext)
-        else:
-            print("not last")
-            counter_bytes = counter.to_bytes(16, byteorder='big')
+        encryptor = cipher.encryptor()
+        keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
 
-            encryptor = cipher.encryptor()
-            keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
+        encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
 
-            encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
+        counter += 1
 
-            counter += 1
+        ciphertext += encrypted_block
 
-            ciphertext += encrypted_block
-
+    ciphertext += mac
     savefile(b64encode(ciphertext))
-    return mac
 
 def aes_decrypt_ccm(key, ciphertext):
-    global mac
+    mac = iv
     backend = default_backend()
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
 
-    # Initialize counter
     counter = int.from_bytes(iv, byteorder='big')
 
     ciphertext = b64decode(ciphertext)
+    recieved_mac = ciphertext[-16:]
+    ciphertext = ciphertext[:-16]
     split_ciphertext = split_text_to_blocks(ciphertext)
-    total_blocks = len(split_ciphertext)
     plaintext = b""
 
 
-    for index, block in enumerate(split_ciphertext):
-        if index == total_blocks - 1:
-            decrypted_block = bytes(x ^ y for x, y in zip(block, mac))
-            plaintext += decrypted_block
-            print("last")
-            print(ciphertext)
-        else:
-            print("not last")
-            counter_bytes = counter.to_bytes(16, byteorder='big')
+    for block in split_ciphertext:
+        counter_bytes = counter.to_bytes(16, byteorder='big')
 
-            encryptor = cipher.encryptor()
-            keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
+        encryptor = cipher.encryptor()
+        keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
 
-            decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
+        decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
 
-            counter += 1
+        counter += 1
 
-            plaintext += decrypted_block
+        plaintext += decrypted_block
+
+    split_plaintext = split_text_to_blocks(plaintext)
+
+    for block in split_plaintext:
+        encryptor = cipher.encryptor()
+
+        working_block = encryptor.update(mac) + encryptor.finalize()
+        mac = bytes(x ^ y for x, y in zip(block, working_block))
 
     plaintext = remove_pkcs7_padding(plaintext)
-    savefile(plaintext)
+
+    if recieved_mac == mac:
+        savefile(plaintext)
+    else:
+        print("mac doesnt match")
 
 def encrypt(selected_mode):
-    global mac
     if selected_mode.get() == "ECB":
         aes_encrypt_ecb(key, message)
     elif selected_mode.get() == "CBC":
@@ -304,45 +297,109 @@ def openkey():
         key = file.read()
 
 
-master = Tk()
-master.title('Exercise_2')
-master.geometry("240x440+10+20")
+class EncryptionApp(tk.Tk):
+    def __init__(self, *args, **kwargs):
+        tk.Tk.__init__(self, *args, **kwargs)
+        self.title('Exercise_2')
+        self.geometry("260x200")
 
-openButton = Button(master, height=2, width=20, text="Open File", command=lambda: openfile())
-openButton.pack(pady=10)
+        container = tk.Frame(self)
+        container.pack(side="top", fill="both", expand=True)
 
-selected_mode = StringVar(master)
-selected_mode.set("ECB")
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
 
-possible_modes = ["ECB", "CBC", "CTR", "CCM"]
+        self.frames = {}
+        for F in (HomePage, EncryptionPage, DecryptionPage, SpeedPage):
+            frame = F(container, self)
+            self.frames[F] = frame
+            frame.grid(row=1, column=0, sticky="nsew")
 
-option_menu = OptionMenu(master, selected_mode, *possible_modes)
-option_menu.pack(pady=10)
+        self.menu = MenuRow(container, self)
+        self.menu.grid(row=0, column=0, sticky="nsew")
 
-headingOneLabel = Label(master, text="Encryption", font=("Helvetica", 16))
-headingOneLabel.pack()
+        self.show_frame(HomePage)
 
-generateButton = Button(master, height=2, width=20, text="Generate key", command=lambda: generate_key())
-generateButton.pack(pady=10)
+    def show_frame(self, cont):
+        frame = self.frames[cont]
+        frame.tkraise()
 
 
-encryptButton = Button(master, height=2, width=20, text="Encrypt", command=lambda: encrypt(selected_mode))
-encryptButton.pack(pady=10)
+class MenuRow(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
 
-headingTwoLabel = Label(master, text="Decryption", font=("Helvetica", 16))
-headingTwoLabel.pack()
+        home_button = tk.Button(self, text="Home", command=lambda: controller.show_frame(HomePage))
+        home_button.grid(row=0, column=0, padx=5)
 
-openButton = Button(master, height=2, width=20, text="Load Key", command=lambda: openkey())
-openButton.pack(pady=10)
+        encryption_button = tk.Button(self, text="Encryption", command=lambda: controller.show_frame(EncryptionPage))
+        encryption_button.grid(row=0, column=1, padx=5)
 
-decryptButton = Button(master, height=2, width=20, text="Decrypt", command=lambda: decrypt(selected_mode))
-decryptButton.pack(pady=10)
+        decryption_button = tk.Button(self, text="Decryption", command=lambda: controller.show_frame(DecryptionPage))
+        decryption_button.grid(row=0, column=2, padx=5)
 
-headingThreeLabel = Label(master, text="Speed", font=("Helvetica", 16))
-headingThreeLabel.pack()
+        speed_button = tk.Button(self, text="Speed", command=lambda: controller.show_frame(SpeedPage))
+        speed_button.grid(row=0, column=3, padx=5)
 
-speed = Text(master, font=("Helvetica", 12))
-speed.pack(pady=10)
 
-master.mainloop()
+class HomePage(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
 
+        encryption_label = tk.Label(self, text="Home Page", font=("Helvetica", 16))
+        encryption_label.pack()
+
+        open_button = tk.Button(self, height=2, width=20, text="Open File")
+        open_button.pack(pady=10)
+
+        selected_mode = tk.StringVar(self)
+        selected_mode.set("ECB")
+        possible_modes = ["ECB", "CBC", "CTR", "CCM"]
+
+        option_menu = tk.OptionMenu(self, selected_mode, *possible_modes)
+        option_menu.config(height=2, width=20)
+        option_menu.pack(pady=10)
+
+
+class EncryptionPage(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+
+        encryption_label = tk.Label(self, text="Encryption", font=("Helvetica", 16))
+        encryption_label.pack()
+
+        generate_key_button = tk.Button(self, height=2, width=20, text="Generate key")
+        generate_key_button.pack(pady=10)
+
+        encrypt_button = tk.Button(self, height=2, width=20, text="Encrypt")
+        encrypt_button.pack(pady=10)
+
+
+class DecryptionPage(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+
+        decryption_label = tk.Label(self, text="Decryption", font=("Helvetica", 16))
+        decryption_label.pack()
+
+        load_key_button = tk.Button(self, height=2, width=20, text="Load Key")
+        load_key_button.pack(pady=10)
+
+        decrypt_button = tk.Button(self, height=2, width=20, text="Decrypt")
+        decrypt_button.pack(pady=10)
+
+
+class SpeedPage(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+
+        speed_label = tk.Label(self, text="Speed", font=("Helvetica", 16))
+        speed_label.pack()
+
+        speed_text = tk.Text(self, height=2, width=20, font=("Helvetica", 12))
+        speed_text.pack(pady=10)
+
+
+if __name__ == "__main__":
+    app = EncryptionApp()
+    app.mainloop()
