@@ -8,6 +8,7 @@ from tkinter import *
 import tkinter.filedialog
 
 iv = secrets.token_bytes(16)
+mac = iv
 message = b''
 key = b''
 extension = ""
@@ -123,17 +124,13 @@ def aes_encrypt_ctr(key, plaintext):
     ciphertext = b""
 
     for block in split_plaintext:
-        # Convert the counter to bytes
         counter_bytes = counter.to_bytes(16, byteorder='big')
 
-        # Encrypt the counter using the key
         encryptor = cipher.encryptor()
         keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
 
-        # XOR the keystream with the plaintext block
         encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
 
-        # Increment the counter for the next block
         counter += 1
 
         ciphertext += encrypted_block
@@ -145,7 +142,6 @@ def aes_decrypt_ctr(key, ciphertext):
     backend = default_backend()
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
 
-    # Initialize counter
     counter = int.from_bytes(iv, byteorder='big')
 
     ciphertext = b64decode(ciphertext)
@@ -153,17 +149,12 @@ def aes_decrypt_ctr(key, ciphertext):
     plaintext = b""
 
     for block in split_ciphertext:
-        # Convert the counter to bytes
         counter_bytes = counter.to_bytes(16, byteorder='big')
-
-        # Encrypt the counter using the key
         encryptor = cipher.encryptor()
         keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
 
-        # XOR the keystream with the ciphertext block
         decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
 
-        # Increment the counter for the next block
         counter += 1
 
         plaintext += decrypted_block
@@ -172,9 +163,87 @@ def aes_decrypt_ctr(key, ciphertext):
 
     savefile(plaintext)
 
+def aes_encrypt_ccm(key, plaintext):
+    global mac
+    backend = default_backend()
+    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
 
+    # Initialize counter
+    counter = int.from_bytes(iv, byteorder='big')
+
+    plaintext = add_pkcs7_padding(plaintext)
+    split_plaintext = split_text_to_blocks(plaintext)
+    total_blocks = len(split_plaintext)
+    ciphertext = b""
+
+    for block in split_plaintext:
+        encryptor = cipher.encryptor()
+
+        working_block = encryptor.update(mac) + encryptor.finalize()
+        mac = bytes(x ^ y for x, y in zip(block, working_block))
+
+
+
+    for index, block in enumerate(split_plaintext):
+        if index == total_blocks - 1:
+            encrypted_block = bytes(x ^ y for x, y in zip(block, mac))
+            ciphertext += encrypted_block
+            print("last")
+            print(ciphertext)
+        else:
+            print("not last")
+            counter_bytes = counter.to_bytes(16, byteorder='big')
+
+            encryptor = cipher.encryptor()
+            keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
+
+            encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
+
+            counter += 1
+
+            ciphertext += encrypted_block
+
+    savefile(b64encode(ciphertext))
+    return mac
+
+def aes_decrypt_ccm(key, ciphertext):
+    global mac
+    backend = default_backend()
+    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
+
+    # Initialize counter
+    counter = int.from_bytes(iv, byteorder='big')
+
+    ciphertext = b64decode(ciphertext)
+    split_ciphertext = split_text_to_blocks(ciphertext)
+    total_blocks = len(split_ciphertext)
+    plaintext = b""
+
+
+    for index, block in enumerate(split_ciphertext):
+        if index == total_blocks - 1:
+            decrypted_block = bytes(x ^ y for x, y in zip(block, mac))
+            plaintext += decrypted_block
+            print("last")
+            print(ciphertext)
+        else:
+            print("not last")
+            counter_bytes = counter.to_bytes(16, byteorder='big')
+
+            encryptor = cipher.encryptor()
+            keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
+
+            decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
+
+            counter += 1
+
+            plaintext += decrypted_block
+
+    plaintext = remove_pkcs7_padding(plaintext)
+    savefile(plaintext)
 
 def encrypt(selected_mode):
+    global mac
     if selected_mode.get() == "ECB":
         aes_encrypt_ecb(key, message)
     elif selected_mode.get() == "CBC":
@@ -182,7 +251,7 @@ def encrypt(selected_mode):
     elif selected_mode.get() == "CTR":
         aes_encrypt_ctr(key, message)
     elif selected_mode.get() == "CCM":
-        print("not yet implemented")
+        aes_encrypt_ccm(key, message)
 
 
 def decrypt(selected_mode):
@@ -193,7 +262,7 @@ def decrypt(selected_mode):
     elif selected_mode.get() == "CTR":
         aes_decrypt_ctr(key, message)
     elif selected_mode.get() == "CCM":
-        print("not yet implemented")
+        aes_decrypt_ccm(key, message)
 
 
 def get_file_type(file_path):
@@ -276,3 +345,4 @@ speed = Text(master, font=("Helvetica", 12))
 speed.pack(pady=10)
 
 master.mainloop()
+
