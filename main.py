@@ -2,15 +2,17 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from base64 import b64encode, b64decode
 import secrets
-import random
-import os
 import tkinter as tk
 import tkinter.filedialog
+import os
+import time
 
 iv = secrets.token_bytes(16)
 message = b''
 key = b''
 extension = ""
+speed_amount = ""
+
 
 def add_pkcs7_padding(plaintext, block_size=16):
     padding_size = block_size - len(plaintext) % block_size
@@ -30,232 +32,184 @@ def split_text_to_blocks(text, block_size=16):
     return blocks
 
 
-def aes_encrypt_ecb(key, plaintext):
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
-    plaintext = add_pkcs7_padding(plaintext)
-    split_plaintext = split_text_to_blocks(plaintext)
-    ciphertext = b""
-
+def calculate_mac(cipher, mac, split_plaintext):
     for block in split_plaintext:
         encryptor = cipher.encryptor()
-        split_ciphertext = encryptor.update(block) + encryptor.finalize()
-        ciphertext = ciphertext + split_ciphertext
 
+        working_block = encryptor.update(mac) + encryptor.finalize()
+        mac = bytes(x ^ y for x, y in zip(block, working_block))
+    return mac
+
+def calculate_speed(plaintext, t1, t2):
+    global speed_amount
+    size = len(plaintext) / (1024 * 1024)
+    seconds = t2 - t1
+    speed = round(size / seconds, 2)
+    speed_amount = f'{speed} MB/s'
+
+def encrypt(key, plaintext, mode, iv=None):
+    backend = default_backend()
+    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
+    t1 = time.time()
+
+    if mode == "ECB":
+        ciphertext = encrypt_ecb(cipher, plaintext)
+    elif mode == "CBC":
+        ciphertext = encrypt_cbc(cipher, plaintext, iv)
+    elif mode == "CTR":
+        ciphertext = encrypt_ctr(cipher, plaintext, iv)
+    elif mode == "CCM":
+        ciphertext = encrypt_ccm(cipher, plaintext, iv)
+    else:
+        raise ValueError("Invalid encryption mode")
+
+    t2 = time.time()
+    calculate_speed(plaintext, t1, t2)
     savefile(b64encode(ciphertext))
 
 
-def aes_decrypt_ecb(key, ciphertext):
+def decrypt(key, ciphertext, mode, iv=None):
     backend = default_backend()
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
     ciphertext = b64decode(ciphertext)
+    t1 = time.time()
 
-    split_ciphertext = split_text_to_blocks(ciphertext)
-    plaintext = b""
+    if mode == "ECB":
+        plaintext = decrypt_ecb(cipher, ciphertext)
+    elif mode == "CBC":
+        plaintext = decrypt_cbc(cipher, ciphertext, iv)
+    elif mode == "CTR":
+        plaintext = decrypt_ctr(cipher, ciphertext, iv)
+    elif mode == "CCM":
+        plaintext = decrypt_ccm(cipher, ciphertext, iv)
+    else:
+        raise ValueError("Invalid decryption mode")
 
-    for block in split_ciphertext:
-        decryptor = cipher.decryptor()
-        split_plaintext = decryptor.update(block) + decryptor.finalize()
-        plaintext = plaintext + split_plaintext
-
-    plaintext = remove_pkcs7_padding(plaintext)
-
+    t2 = time.time()
+    calculate_speed(plaintext, t1, t2)
     savefile(plaintext)
 
 
-def aes_encrypt_cbc(key, plaintext):
-    temporary_block = iv
-
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
+def encrypt_ecb(cipher, plaintext):
     plaintext = add_pkcs7_padding(plaintext)
-    split_plaintext = split_text_to_blocks(plaintext)
-    ciphertext = b""
+    ciphertext = b''
 
-    for block in split_plaintext:
+    for block in split_text_to_blocks(plaintext):
         encryptor = cipher.encryptor()
+        split_ciphertext = encryptor.update(block) + encryptor.finalize()
+        ciphertext += split_ciphertext
 
-        working_block = bytes(x ^ y for x, y in zip(block, temporary_block))
-        split_ciphertext = encryptor.update(working_block) + encryptor.finalize()
-
-        temporary_block = split_ciphertext
-
-        ciphertext = ciphertext + split_ciphertext
-
-    savefile(b64encode(ciphertext))
+    return ciphertext
 
 
+def decrypt_ecb(cipher, ciphertext):
+    plaintext = b''
 
-def aes_decrypt_cbc(key, ciphertext):
-    temporary_block = iv
-
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-    ciphertext = b64decode(ciphertext)
-
-    split_ciphertext = split_text_to_blocks(ciphertext)
-    plaintext = b""
-
-    for block in split_ciphertext:
+    for block in split_text_to_blocks(ciphertext):
         decryptor = cipher.decryptor()
         split_plaintext = decryptor.update(block) + decryptor.finalize()
-        working_block = bytes(x ^ y for x, y in zip(split_plaintext, temporary_block))
-        temporary_block = block
+        plaintext += split_plaintext
+
+    plaintext = remove_pkcs7_padding(plaintext)
+    return plaintext
+
+
+def encrypt_cbc(cipher, plaintext, iv):
+    plaintext = add_pkcs7_padding(plaintext)
+    ciphertext = b""
+    previous_block = iv
+
+    for block in split_text_to_blocks(plaintext):
+        encryptor = cipher.encryptor()
+        working_block = bytes(x ^ y for x, y in zip(block, previous_block))
+        encrypted_block = encryptor.update(working_block) + encryptor.finalize()
+        ciphertext += encrypted_block
+        previous_block = encrypted_block
+
+    return ciphertext
+
+
+def decrypt_cbc(cipher, ciphertext, iv):
+    plaintext = b""
+    previous_block = iv
+
+    for block in split_text_to_blocks(ciphertext):
+        decryptor = cipher.decryptor()
+        split_plaintext = decryptor.update(block) + decryptor.finalize()
+        working_block = bytes(x ^ y for x, y in zip(split_plaintext, previous_block))
+        previous_block = block
         plaintext += working_block
 
     plaintext = remove_pkcs7_padding(plaintext)
-
-    savefile(plaintext)
-
+    return plaintext
 
 
-def aes_encrypt_ctr(key, plaintext):
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
-    # Initialize counter
-    counter = int.from_bytes(iv, byteorder='big')
-
-    plaintext = add_pkcs7_padding(plaintext)
-    split_plaintext = split_text_to_blocks(plaintext)
-    ciphertext = b""
-
-    for block in split_plaintext:
-        counter_bytes = counter.to_bytes(16, byteorder='big')
-
+def ctr_mode(cipher, ciphertext, counter, counter_bytes, plaintext):
+    for block in split_text_to_blocks(plaintext):
         encryptor = cipher.encryptor()
         keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
-
         encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
-
-        counter += 1
-
         ciphertext += encrypted_block
+        counter += 1
+        counter_bytes = counter.to_bytes(16, byteorder='big')
+    return ciphertext
 
-    savefile(b64encode(ciphertext))
 
-
-def aes_decrypt_ctr(key, ciphertext):
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
+def encrypt_ctr(cipher, plaintext, iv):
+    plaintext = add_pkcs7_padding(plaintext)
+    ciphertext = b""
     counter = int.from_bytes(iv, byteorder='big')
+    counter_bytes = counter.to_bytes(16, byteorder='big')
 
-    ciphertext = b64decode(ciphertext)
-    split_ciphertext = split_text_to_blocks(ciphertext)
+    ciphertext = ctr_mode(cipher, ciphertext, counter, counter_bytes, plaintext)
+
+    return ciphertext
+
+
+def decrypt_ctr(cipher, ciphertext, iv):
     plaintext = b""
 
-    for block in split_ciphertext:
-        counter_bytes = counter.to_bytes(16, byteorder='big')
-        encryptor = cipher.encryptor()
-        keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
-
-        decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
-
-        counter += 1
-
-        plaintext += decrypted_block
-
-    plaintext = remove_pkcs7_padding(plaintext)
-
-    savefile(plaintext)
-
-def aes_encrypt_ccm(key, plaintext):
-    mac = iv
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
     counter = int.from_bytes(iv, byteorder='big')
+    counter_bytes = counter.to_bytes(16, byteorder='big')
 
+    plaintext = ctr_mode(cipher, plaintext, counter, counter_bytes, ciphertext)
+    plaintext = remove_pkcs7_padding(plaintext)
+    return plaintext
+
+
+def encrypt_ccm(cipher, plaintext, iv):
     plaintext = add_pkcs7_padding(plaintext)
-    split_plaintext = split_text_to_blocks(plaintext)
+    counter = int.from_bytes(iv, byteorder='big')
+    counter_bytes = counter.to_bytes(16, byteorder='big')
+
+    mac = iv
     ciphertext = b""
 
-    for block in split_plaintext:
-        encryptor = cipher.encryptor()
-
-        working_block = encryptor.update(mac) + encryptor.finalize()
-        mac = bytes(x ^ y for x, y in zip(block, working_block))
-
-
-    for block in split_plaintext:
-        counter_bytes = counter.to_bytes(16, byteorder='big')
-
-        encryptor = cipher.encryptor()
-        keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
-
-        encrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
-
-        counter += 1
-
-        ciphertext += encrypted_block
-
+    mac = calculate_mac(cipher, mac, split_text_to_blocks(plaintext))
+    ciphertext = ctr_mode(cipher, ciphertext, counter, counter_bytes, plaintext)
     ciphertext += mac
-    savefile(b64encode(ciphertext))
 
-def aes_decrypt_ccm(key, ciphertext):
-    mac = iv
-    backend = default_backend()
-    cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
+    return ciphertext
 
+
+def decrypt_ccm(cipher, ciphertext, iv):
     counter = int.from_bytes(iv, byteorder='big')
+    counter_bytes = counter.to_bytes(16, byteorder='big')
 
-    ciphertext = b64decode(ciphertext)
+    mac = iv
     recieved_mac = ciphertext[-16:]
     ciphertext = ciphertext[:-16]
-    split_ciphertext = split_text_to_blocks(ciphertext)
     plaintext = b""
 
-
-    for block in split_ciphertext:
-        counter_bytes = counter.to_bytes(16, byteorder='big')
-
-        encryptor = cipher.encryptor()
-        keystream_block = encryptor.update(counter_bytes) + encryptor.finalize()
-
-        decrypted_block = bytes(x ^ y for x, y in zip(block, keystream_block))
-
-        counter += 1
-
-        plaintext += decrypted_block
-
-    split_plaintext = split_text_to_blocks(plaintext)
-
-    for block in split_plaintext:
-        encryptor = cipher.encryptor()
-
-        working_block = encryptor.update(mac) + encryptor.finalize()
-        mac = bytes(x ^ y for x, y in zip(block, working_block))
-
+    plaintext = ctr_mode(cipher, plaintext, counter, counter_bytes, ciphertext)
+    mac = calculate_mac(cipher, mac, split_text_to_blocks(plaintext))
     plaintext = remove_pkcs7_padding(plaintext)
 
     if recieved_mac == mac:
-        savefile(plaintext)
+        return plaintext
     else:
-        print("mac doesnt match")
-
-def encrypt(selected_mode):
-    if selected_mode.get() == "ECB":
-        aes_encrypt_ecb(key, message)
-    elif selected_mode.get() == "CBC":
-        aes_encrypt_cbc(key, message)
-    elif selected_mode.get() == "CTR":
-        aes_encrypt_ctr(key, message)
-    elif selected_mode.get() == "CCM":
-        aes_encrypt_ccm(key, message)
-
-
-def decrypt(selected_mode):
-    if selected_mode.get() == "ECB":
-        aes_decrypt_ecb(key, message)
-    elif selected_mode.get() == "CBC":
-        aes_decrypt_cbc(key, message)
-    elif selected_mode.get() == "CTR":
-        aes_decrypt_ctr(key, message)
-    elif selected_mode.get() == "CCM":
-        aes_decrypt_ccm(key, message)
+        print("mac doesn't match")
+        return None
 
 
 def get_file_type(file_path):
@@ -273,9 +227,10 @@ def openfile():
 
 
 def savefile(used_message):
-    file = open("file" + str(random.randint(1, 100)) + extension, "xb")
-    file.write(used_message)
-    file.close()
+    global extension
+    file_path = tkinter.filedialog.asksaveasfilename(defaultextension=extension)
+    with open(file_path, 'xb') as file:
+        file.write(used_message)
 
 
 def generate_key():
@@ -285,9 +240,9 @@ def generate_key():
 
 
 def save_key(generated_key):
-    file = open("key" + str(random.randint(1, 100)) + ".txt", "xb")
-    file.write(generated_key)
-    file.close()
+    file_path = tkinter.filedialog.asksaveasfilename(defaultextension=".txt")
+    with open(file_path, 'xb') as file:
+        file.write(generated_key)
 
 
 def openkey():
@@ -301,7 +256,7 @@ class EncryptionApp(tk.Tk):
     def __init__(self, *args, **kwargs):
         tk.Tk.__init__(self, *args, **kwargs)
         self.title('Exercise_2')
-        self.geometry("260x200")
+        self.geometry("280x280")
 
         container = tk.Frame(self)
         container.pack(side="top", fill="both", expand=True)
@@ -309,9 +264,12 @@ class EncryptionApp(tk.Tk):
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
 
+        self.selected_mode = tk.StringVar(self)
+        self.selected_mode.set("ECB")
+
         self.frames = {}
-        for F in (HomePage, EncryptionPage, DecryptionPage, SpeedPage):
-            frame = F(container, self)
+        for F in (HomePage, EncryptionPage, DecryptionPage):
+            frame = F(container, self, self.selected_mode, speed_amount)
             self.frames[F] = frame
             frame.grid(row=1, column=0, sticky="nsew")
 
@@ -338,22 +296,18 @@ class MenuRow(tk.Frame):
         decryption_button = tk.Button(self, text="Decryption", command=lambda: controller.show_frame(DecryptionPage))
         decryption_button.grid(row=0, column=2, padx=5)
 
-        speed_button = tk.Button(self, text="Speed", command=lambda: controller.show_frame(SpeedPage))
-        speed_button.grid(row=0, column=3, padx=5)
-
 
 class HomePage(tk.Frame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, selected_mode, speed_amount):
         tk.Frame.__init__(self, parent)
+        self.controller = controller
 
         encryption_label = tk.Label(self, text="Home Page", font=("Helvetica", 16))
         encryption_label.pack()
 
-        open_button = tk.Button(self, height=2, width=20, text="Open File")
+        open_button = tk.Button(self, height=2, width=20, text="Open File", command=lambda: openfile())
         open_button.pack(pady=10)
 
-        selected_mode = tk.StringVar(self)
-        selected_mode.set("ECB")
         possible_modes = ["ECB", "CBC", "CTR", "CCM"]
 
         option_menu = tk.OptionMenu(self, selected_mode, *possible_modes)
@@ -362,42 +316,54 @@ class HomePage(tk.Frame):
 
 
 class EncryptionPage(tk.Frame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, selected_mode, speed_amount):
         tk.Frame.__init__(self, parent)
 
         encryption_label = tk.Label(self, text="Encryption", font=("Helvetica", 16))
         encryption_label.pack()
 
-        generate_key_button = tk.Button(self, height=2, width=20, text="Generate key")
+        generate_key_button = tk.Button(self, height=2, width=20, text="Generate key", command=lambda: generate_key())
         generate_key_button.pack(pady=10)
 
-        encrypt_button = tk.Button(self, height=2, width=20, text="Encrypt")
+        encrypt_button = tk.Button(self, height=2, width=20, text="Encrypt",
+                                   command=lambda: [encrypt(key, message, selected_mode.get(), iv), self.update_speed()])
         encrypt_button.pack(pady=10)
+
+        speed_label = tk.Label(self, text="Speed", font=("Helvetica", 16))
+        speed_label.pack()
+
+        self.speed_text = tk.Text(self, height=2, width=20, font=("Helvetica", 12))
+        self.speed_text.pack(pady=10)
+
+    def update_speed(self):
+        self.speed_text.delete(1.0, tk.END)
+        self.speed_text.insert(tk.END, speed_amount)
 
 
 class DecryptionPage(tk.Frame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, selected_mode, speed_amount):
         tk.Frame.__init__(self, parent)
 
         decryption_label = tk.Label(self, text="Decryption", font=("Helvetica", 16))
         decryption_label.pack()
 
-        load_key_button = tk.Button(self, height=2, width=20, text="Load Key")
+        load_key_button = tk.Button(self, height=2, width=20, text="Load Key", command=lambda: openkey())
         load_key_button.pack(pady=10)
 
-        decrypt_button = tk.Button(self, height=2, width=20, text="Decrypt")
+        decrypt_button = tk.Button(self, height=2, width=20, text="Decrypt",
+                                   command=lambda: [decrypt(key, message, selected_mode.get(), iv), self.update_speed()])
         decrypt_button.pack(pady=10)
-
-
-class SpeedPage(tk.Frame):
-    def __init__(self, parent, controller):
-        tk.Frame.__init__(self, parent)
 
         speed_label = tk.Label(self, text="Speed", font=("Helvetica", 16))
         speed_label.pack()
 
-        speed_text = tk.Text(self, height=2, width=20, font=("Helvetica", 12))
-        speed_text.pack(pady=10)
+        self.speed_text = tk.Text(self, height=2, width=20, font=("Helvetica", 12))
+        self.speed_text.pack(pady=10)
+
+    def update_speed(self):
+        self.speed_text.delete(1.0, tk.END)
+        self.speed_text.insert(tk.END, speed_amount)
+
 
 
 if __name__ == "__main__":
