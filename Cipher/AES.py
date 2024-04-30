@@ -4,27 +4,29 @@ from base64 import b64encode, b64decode
 import secrets
 import time
 
-from AESUtils import AESUtils
-from Utils import Utils
+from Cipher.AESUtils import AESUtils
+from Utils.Utils import Utils
 
 
 class AES:
     def __init__(self):
         self.backend = default_backend()
         self.iv = secrets.token_bytes(16)
-        self.key = b''
-
-        self.cipher = None
-
-    def generate_key(self):
         self.key = secrets.token_bytes(32)
+
         self.cipher = Cipher(algorithms.AES(self.key), modes.ECB(), backend=self.backend)
+
+    def save_key(self):
         Utils.save_file(self.key, ".txt")
 
     def open_key(self):
         f_types = [("Text Files", "*.txt")]
         self.key = Utils.open_file(f_types)
         self.cipher = Cipher(algorithms.AES(self.key), modes.ECB(), backend=self.backend)
+
+    def open_iv(self):
+        f_types = [("Text Files", "*.txt")]
+        self.iv = Utils.open_file(f_types)
 
     def encrypt(self, plaintext, mode, file_format, callback=None):
         t1 = time.time()
@@ -136,6 +138,7 @@ class AES:
         counter = int.from_bytes(self.iv, byteorder='big')
 
         ciphertext = self.ctr_mode(ciphertext, counter, plaintext)
+        Utils.save_file(self.iv, ".txt")
 
         return ciphertext
 

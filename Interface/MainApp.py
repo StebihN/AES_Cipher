@@ -1,15 +1,15 @@
 import tkinter as tk
 
-from Navbar import Navbar
-from HomePage import HomePage
-from Utils import Utils
+from Interface.Navbar import Navbar
+from Interface.HomePage import HomePage
+from Utils.Utils import Utils
 
 
-class Interface(tk.Frame):
-    def __init__(self, parent, cypher, *args, **kwargs):
+class MainApp(tk.Frame):
+    def __init__(self, parent, cipher, *args, **kwargs):
         tk.Frame.__init__(self, parent, *args, **kwargs)
 
-        self.cypher = cypher
+        self.cipher = cipher
         self.file = None
         self.file_format = None
         self.selected_mode = tk.StringVar(self)

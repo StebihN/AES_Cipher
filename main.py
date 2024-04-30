@@ -1,12 +1,14 @@
 import tkinter as tk
-from Interface import Interface
-from AES import AES
+
+from Cipher.AES import AES
+from Interface.MainApp import MainApp
+
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title('AES Encryption')
+    root.title('Cipher Encryption')
     root.geometry("280x280")
 
-    cypher = AES()
-    Interface(root, cypher).pack()
+    cipher = AES()
+    MainApp(root, cipher).pack()
 
     root.mainloop()
