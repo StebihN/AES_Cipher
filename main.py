@@ -5,7 +5,7 @@ from Interface.MainApp import MainApp
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title('Cipher Encryption')
+    root.title('AES Encryption')
     root.geometry("280x280")
 
     cipher = AES()
